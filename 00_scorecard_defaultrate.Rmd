@@ -1,0 +1,101 @@
+---
+title: "Default Rate Linear Regression Method"
+output: pdf_document
+---
+
+```{r, echo=FALSE, results=FALSE, warning=FALSE, message=FALSE}
+library("knitr")
+library(gridExtra)
+opts_chunk$set(echo=FALSE, warning=FALSE, message=FALSE, fig.width=5, fig.height=3)
+```
+
+```{r results=FALSE}
+setwd("/Users/kwalker/git_projects/college_scorecard")
+source("/Users/kwalker/git_projects/college_scorecard/02_model.R")
+```
+
+
+**What makes a certain college a good investment?** Is it producing graduates with less debt? Is it producing graduates who make more money 10 years after finishing? Or is it something less quantifiable, like guiding students into discovering their vocation or completing meaningful coursework?  
+
+The **U.S. Department of Education** quantifies college performance on a number of dimensions. **[College Scorecard](https://collegescorecard.ed.gov)** is an interactive tool designed to help students choose a college based on government data about cost, financial aid, retention, completion and programs. The [data](https://collegescorecard.ed.gov/data/), spanning 1996-2013, is publicly available in .csv format.  
+
+### Data & Method  
+
+**Data**  
+The model was trained on 4 years of data, 2010-2013, with 20% of the data held out as a validation set. Only four-year public and private non-profit colleges and universities with at least 500 students were included in these figures (1666 schools). 
+
+**Dependent Variable: Default Rate**  
+While the dataset includes more than 1700 variables, I decided to focus on the **default rate (3 year cohort)** as the best measure of a college's value. It combines debt with post-graduate earnings into one feature, since a student that defaults on their student loans is clearly either buried in debt, not making high enough salary, or both. The median graduate debt dimension in the dataset wasn't viable since it only includes federal loan debt (which caps at $27,000) and the post-graduate earnings dimension was sparsely populated and therefore not ideal.   
+
+Default rate had a right skewed distribution, which I remedied at least partially by taking its square root. See item 1 in the appendix for a comparison of distributions.     
+
+**Independent Variable Selection**  
+I cherry-picked about 30 variables out of the dataset that I thought would have the greatest effect on default rate, including factors related to retention, completion, student debt, financial aid and cost. A large percentage of the variables in the dataset were too specific to have much weight - things like "percent of dependent students who died within 3 years at original institution" and "percent of high-income (above $75,000 in nominal family income) students withdrawn from original institution within 8 years." Additionally, a lot of variables were missing 90-100% of values and thus had to be thrown out (e.g., "percent of students who submitted a FAFSA to at least one college").  
+  
+```{r results=TRUE}
+ivs <- data.frame(Variable=names(data3[ c(3:14,16,17)]), Description=c("Public or Private Non-Profit", "Admission Rate", "Size of Enrollment", "Average Cost", "Net Revenue per Student", "Institutional Expense per Student", "Average Faculty Pay", "Percent Full Time Faculty", "Percentage of Students with Pell Grants", "Completion Rate (6 years)", "Retention Rate", "Percentage of Students with Federal Loans", "Avg. Family Income (dependent students)", "Median Debt of Graduates (suppressed for n<30)"))
+
+kable(ivs)
+```
+
+**Missing Value Imputation**  
+I only selected variables with less than 25% missing values. Because the Default.2Y and Defaulty.3Y variables were missing values in alternate observations (rarely both missing in an obs.), I was able to combine the 2 year and 3 year default rates and impute the rest. I then used the **mice** package (Multivariate Imputations by Chained Equations) to impute the remaining missing values using the pmm or predictive mean matching method. See item 2 in the appendix for a breakdown of missing values by variable.      
+    
+**Model Selection**  
+I fit a model with all variables, which found all but institutional expense to be significant, providing an adjusted R-squared value of 0.6047, F = 532.4, p < 2.2e-16. Stepwise selection recommended dropping Net Revenue per Student, Average Faculty Pay and Percentage of Students with Federal Loans, which resulted in a model with an increased F statistic but no change in the R squared value of 0.6047, F = 677.4, p < 2.2e-16. See item 3 in the appendix for a summary of the model; item 4 for the diagnostic plots and item 5 for the predictons vs. actual observations of the test set.   
+
+### Model  
+
+A quick interpretation of the results is that higher retention, higher completion rate, higher institutional spending per student and higher admission rates predict lower default rates, while being public, larger enrollment, higher cost, more full time faculty, more students with Pell Grants and debt predict higher default rates.  
+
+**Diagnostics**  
+The diagnostic plots are mostly normal save for the presence schools with default rates of 0 (29 total, a good chunk of them seminaries or bible schools, but also included California Institute of Technology, Claremont McKenna College, Harvey Mudd College and Vassar College).  
+  
+**Validation**  
+Comparing the model's predicted values to the actual values in the test set produced an R-squared value of 62.69%.   
+
+### Appendix    
+
+1. Default rate transformation  
+  
+```{r fig.width=8, fig.height=2.5}
+a <- ggplot(data3, aes(Default.3Y)) + geom_histogram(stat="bin", binwidth=0.02) + theme_classic() + labs(title="Default Rate")
+b <- ggplot(data3, aes(sqrt(Default.3Y))) + geom_histogram(stat="bin", binwidth=0.02) + theme_classic() + labs(title="Square Root of Default Rate")
+
+grid.arrange(a,b,ncol=2)
+```
+
+2. Missing values  
+  
+```{r}
+miss <- data.frame(Variable=c("Avg. Family Income (dependents)", "Admission Rate", "Completion Rate", "Retention Rate", "Median Debt", 
+                              "Net Revenue per Student", "Institutional Expense per Student","Avg. Faculty Pay", 
+                              "Percent Full Time Faculty", "Default Rate", "Percent of Students with Pell Grants"), 
+                   Imputed=c(908,529,165,141,
+                             25,31,31,31,15,8,4))
+kable(miss)
+```
+
+3. Summary of linear model  
+  
+```{r}
+summary(fit2)
+```
+
+4. Linear model diagnostics  
+  
+```{r fig.height=4, fig.width=6}
+par(mfrow=c(2,2))
+par(mar=c(2,2,2,2))
+plot(fit2)
+```
+
+5. Linear model validation  
+  
+```{r}
+ggplot(test, aes(sqrt(Default.3Y), predictions)) + geom_point() + ylim(c(0,.7)) + xlim(c(0,.7)) + theme_classic() +
+    xlab("Default rate") + ylab("Predicted Value") + labs(title="Predicted Value vs. Actual Value, test set") + 
+    geom_abline(slope=1, intercept=0, color="blue") + annotate("text", x=.7, hjust=1, y=.5, label=paste("R-squared:\n", round(test.rsq, 4)))
+
+```  
+  
