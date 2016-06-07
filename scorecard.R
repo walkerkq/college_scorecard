@@ -8,10 +8,10 @@ library(lattice)
 
 ############################ DATA CLEANSING ############################
 
-#setwd("/Users/kaylinwalker/R/college_scorecard/data/")
-setwd("/Users/kwalker/git_projects/college_scorecard/data/")
+setwd("/Users/kaylinwalker/R/college_scorecard/data/")
+#setwd("/Users/kwalker/git_projects/college_scorecard/data/")
 
-#setwd("/Users/kwalker/git_projects/scorecard_large_data/")
+setwd("/Users/kaylinwalker/Desktop/large_data/")
 data10 <- read.csv("merged_2010_PP.csv", stringsAsFactors=FALSE)
 data11 <- read.csv("merged_2011_PP.csv", stringsAsFactors=FALSE)
 data12 <- read.csv("merged_2012_PP.csv", stringsAsFactors=FALSE)
@@ -22,12 +22,17 @@ data12$Year <- 2012
 data13$Year <- 2013
 data0 <- rbind(data10, data11, data12, data13)
 
-data <- data0[ , c(4, 6, 15, 16, 17, 19, 37, 291, 377, 384, 385, 386, 387, 429, 438, 440, 441, 
-                   1432, 1730)] 
+data <- data0[ , c(4, 6, 15, 16, 17, 19, 37, 291, 377, 382, 383, 384, 385, 386, 387, 429, 438, 440, 441, 
+                   1432, 1709, 1730)] 
 
 colnames(data) <- c("School", "State", "Predominant.Degree", "Highest.Degree", "Type", "Region", "Adm.Rate", "Enrollment",
-                    "Avg.Cost", "Avg.Faculty.Pay", "Percent.FTE.Faculty", "Pell.Grant.Pct", "Completion", 
-                    "Retention",  "Pct.Fed.Loan", "Default.2Y", "Default.3Y", "Avg.Fam.Income.Dependent", "Year")
+                    "Avg.Cost", "Net.Revenue", "Inst.Expense", "Avg.Faculty.Pay", "Percent.FTE.Faculty", "Pell.Grant.Pct", 
+                    "Completion", "Retention",  "Pct.Fed.Loan", "Default.2Y", "Default.3Y", "Avg.Fam.Income.Dependent", 
+                     "Md.Debt.n30", "Year")
+
+# remove FAFSA, Mn.Earnings.6Y, Md.Earnings.6Y, Md.Household.Income [6080 NAs / 100%]
+# consider removing Default.3Y, Default.2Y [1532 NAs / about 25%] & Avg.Fam.Income.Dependent [908 NAs / 15%]
+# 
 
 #write.csv(data, "merged_2010-2013.csv", row.names=FALSE)
 data <- read.csv("merged_2010-2013.csv", stringsAsFactors=FALSE)
@@ -35,13 +40,12 @@ data <- read.csv("merged_2010-2013.csv", stringsAsFactors=FALSE)
 # format numbers and factors
 data$Type <- gsub("1", "Public", data$Type)
 data$Type <- gsub("2", "Private", data$Type)
-data$Type <- gsub("3", "Private For-Profit", data$Type)
-for (u in c(2:6, 19)) data[,u] <- as.factor(data[,u])
-for (u in c(7:18)) data[,u] <- as.numeric(data[,u])
+for (u in c(c(2:4,6), 22)) data[,u] <- as.factor(data[,u])
+for (u in c(7:21)) data[,u] <- as.numeric(gsub(",", "", data[,u]))
 
 # keep schools with > 500 students who mostly grant Bachelors and drop for-profit private
 data2 <- data[data$Predominant.Degree==3 & data$Type!="Private For-Profit" & data$Enrollment > 500, ] 
-data2 <- data2[!is.na(data2$Type), ]
+data2 <- data2[!is.na(data2$Type), c(1, 5, 7:22)]
 
 ############################ MODEL BUILDING ############################
 
@@ -49,42 +53,43 @@ data2 <- data2[!is.na(data2$Type), ]
 
 # visualize missing data
 missing <- data.frame(var=names(data2))
-for(g in 1:18) { missing$NAs[g] <- sum(is.na(data2[,g])) }
-ggplot(missing, aes(var, NAs)) + geom_bar(stat="identity") + theme_classic() + xlab("Variable") + ylab("Number Missing (out of 6080)") +
-     theme(axis.text.x = element_text(angle=60, hjust=1))
+for(g in 1:22) { missing$NAs[g] <- sum(is.na(data2[,g])) }
+missing$NA.rate <- round(missing$NAs / 6745, 3)
+ggplot(missing, aes(var, NA.rate)) + geom_bar(stat="identity") + theme_classic() + xlab("Variable") + ylab("Percent Missing") +
+     theme(axis.text.x = element_text(angle=30, hjust=1, size=12)) + labs(title="Missingness by Variable")
 
 # manual solution: put default.2y and .3y vars together
 for(r in seq_along(data2$Default.3Y)) { if(is.na(data2$Default.3Y[r])) data2$Default.3Y[r] <- data2$Default.2Y[r] }
 data2$Default.2Y <- NULL
 
-# use mice package to impute missing data
-tempData <- mice(data2[,7:17],m=1,maxit=50,meth='pmm',seed=500)
+# use MICE package to impute missing data
+tempData <- mice(data2[,2:16], m=1, maxit=50, meth='pmm', seed=500)
 summary(tempData)
 densityplot(tempData)
 completed <- complete(tempData, 1)
-data3 <- cbind(data2[ ,c(18, 1:6)], completed)
+data3 <- cbind(data2[ ,c(17, 1)], completed)
 
 ############### HOLD OUT A VALIDATION SET ##############
 
 sample <- floor(0.80 * nrow(data3))
 set.seed(555)
 train_ind <- sample(seq_len(nrow(data3)), size = sample)
-train <- data3[train_ind, ]
-test <- data3[-train_ind, ]
+train <- data3[train_ind, 3:17]
+test <- data3[-train_ind, 3:17]
 
 
 ############### LINEAR REGRESSION ##############
-fit <- lm(Default.3Y ~ ., train[,c(8:18)]) # leave out school, state, degree, region and year
+fit <- lm(sqrt(Default.3Y) ~ ., train) # leave out school, state, degree, region and year
 step <- stepAIC(fit, direction="both")
-fit2 <- lm(Default.3Y ~ Adm.Rate + Enrollment + Avg.Cost + Percent.FTE.Faculty + Pell.Grant.Pct + 
-               Completion + Retention + Pct.Fed.Loan, data = train[,8:18])
+fit2 <- lm(sqrt(Default.3Y) ~ Type + Adm.Rate + Enrollment + Avg.Cost + 
+                Net.Revenue + Inst.Expense + Avg.Faculty.Pay + Percent.FTE.Faculty + 
+                Pell.Grant.Pct + Completion + Retention + Pct.Fed.Loan + 
+                Avg.Fam.Income.Dependent + Md.Debt.n30, data = train)
 test$predictions <- predict(fit2, test)
-ggplot(test, aes(Default.3Y, predictions)) + geom_point() + ylim(c(0,.4)) + xlim(c(0, .4))
-check <- lm(Default.3Y ~ predictions, test) # 60%
-
-
-
-
+ggplot(test, aes(sqrt(Default.3Y), predictions)) + geom_point() + ylim(c(0,.7)) + xlim(c(0,.7)) + theme_classic() +
+     xlab("Default rate") + ylab("Predicted Value") + labs(title="Predicted Value vs. Actual Value, test set") + 
+     geom_abline(slope=1, intercept=0, color="blue")
+check <- lm(Default.3Y ~ predictions, test) # 65%
 
 
 
