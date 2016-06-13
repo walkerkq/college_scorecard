@@ -44,11 +44,11 @@ for(r in seq_along(data2$Default.3Y)) { if(is.na(data2$Default.3Y[r])) data2$Def
 data2$Default.2Y <- NULL
 
 # use MICE package to impute missing data
-tempData <- mice(data2[,2:11], m=1, maxit=50, meth='pmm', seed=500)
-summary(tempData)
-densityplot(tempData)
-completed <- complete(tempData, 1)
-data3 <- cbind(data2[ ,c(12, 1)], completed)
+#tempData <- mice(data2[,2:11], m=1, maxit=50, meth='pmm', seed=500)
+#summary(tempData)
+#densityplot(tempData)
+#completed <- complete(tempData, 1)
+#data3 <- cbind(data2[ ,c(12, 1)], completed)
 
 # write.csv(data3, "data/imputed_data.csv", row.names=FALSE)
 data3 <- read.csv("data/imputed_data.csv", stringsAsFactors=FALSE)
@@ -71,8 +71,11 @@ test <- data3[-train_ind, 3:12]
 ############### LINEAR REGRESSION ##############
 
 fit <- lm(log(Default.3Y) ~ ., train) 
-fit2 <- stepAIC(fit, direction="both", trace=FALSE)
-test$predictions <- predict(fit2, test)
+fit2 <- stepAIC(fit, direction="both", trace=FALSE) #0.59 R-sq, adj
+# try keeping only the largest influences 
+fitSmall <- lm(log(Default.3Y) ~ Completion + Pell.Grant.Pct, train) #0.575 R-sq, adj
+# use the smallest model. adding Type only added 0.002% adj R-sq
+test$predictions <- predict(fitSmall, test)
 errors <- log(test$Default.3Y) - test$predictions
 test.rsq <- 1 - (sum(errors^2) / sum((log(test$Default.3Y)-mean(log(test$Default.3Y)))^2))
 
@@ -83,7 +86,7 @@ ggplot(test, aes(log(Default.3Y), predictions)) + geom_point()  + theme_classic(
 
 ############################ INTERPRET ############################
 
-results <- data.frame(coef=names(fit2$coefficients), log.estimate=fit2$coefficients)
+results <- data.frame(coef=names(fitSmall$coefficients), log.estimate=fitSmall$coefficients)
 results$exp.estimate <- as.numeric(exp(results$log.estimate))
 results$exp.estimate.minus1 <- results$exp.estimate - 1
 for(g in c(2,3,4)) results[,g] <- format(results[,g], scientific=F)
